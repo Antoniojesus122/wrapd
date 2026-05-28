@@ -1,0 +1,59 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-bg: #0a0a0a;
+  --color-bg-soft: #0d0d10;
+  --color-surface: #161618;
+  --color-surface-2: #1d1d20;
+  --color-border: #28282b;
+  --color-border-strong: #3a3a3e;
+  --color-text: #fafafa;
+  --color-text-dim: #a0a0a8;
+  --color-text-mute: #6b6b73;
+
+  --color-magenta: #ff2d92;
+  --color-magenta-soft: rgba(255, 45, 146, 0.15);
+  --color-cyan: #00d4ff;
+  --color-cyan-soft: rgba(0, 212, 255, 0.15);
+  --color-green: #1ed760;
+  --color-gold: #ffc857;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, monospace;
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+::selection {
+  background: rgba(255, 45, 146, 0.3);
+  color: white;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 5px;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 1.5s ease-in-out infinite;
+}

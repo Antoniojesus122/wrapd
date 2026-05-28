@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnp.*
+.yarn/
+
+# Builds
+dist/
+build/
+.next/
+out/
+
+# Python
+__pycache__/
+*.py[codz]
+.venv/
+.pytest_cache/
+.coverage
+*.egg-info/
+
+# Environment — NEVER commit
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+**/.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Next.js
+.vercel
+next-env.d.ts
+.turbo
+
+# TypeScript
+*.tsbuildinfo
