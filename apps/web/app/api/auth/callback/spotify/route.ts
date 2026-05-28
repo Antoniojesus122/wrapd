@@ -12,6 +12,7 @@ import { cookies } from 'next/headers'
 import { exchangeCodeForTokens, fetchSpotifyProfile } from '@/lib/spotify'
 import { pool } from '@/lib/db'
 import { setSessionCookie } from '@/lib/session'
+import { absoluteUrl } from '@/lib/url'
 
 const STATE_COOKIE = 'wrapd_oauth_state'
 
@@ -22,10 +23,10 @@ export async function GET(req: NextRequest) {
   const error = url.searchParams.get('error')
 
   if (error) {
-    return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(error)}`, req.url))
+    return NextResponse.redirect(absoluteUrl(req, `/?error=${encodeURIComponent(error)}`))
   }
   if (!code || !state) {
-    return NextResponse.redirect(new URL('/?error=missing_code_or_state', req.url))
+    return NextResponse.redirect(absoluteUrl(req, '/?error=missing_code_or_state'))
   }
 
   // Verify CSRF state
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
   const cookieState = c.get(STATE_COOKIE)?.value
   c.delete(STATE_COOKIE)
   if (!cookieState || cookieState !== state) {
-    return NextResponse.redirect(new URL('/?error=state_mismatch', req.url))
+    return NextResponse.redirect(absoluteUrl(req, '/?error=state_mismatch'))
   }
 
   try {
@@ -90,12 +91,12 @@ export async function GET(req: NextRequest) {
     // Sign + set session cookie
     await setSessionCookie({ userId: profile.id })
 
-    return NextResponse.redirect(new URL('/home', req.url))
+    return NextResponse.redirect(absoluteUrl(req, '/home'))
   } catch (e) {
     console.error('[oauth] callback failed', e)
     const message = e instanceof Error ? e.message : 'unknown'
     return NextResponse.redirect(
-      new URL(`/?error=${encodeURIComponent('oauth_failed:' + message.slice(0, 80))}`, req.url)
+      absoluteUrl(req, `/?error=${encodeURIComponent('oauth_failed:' + message.slice(0, 400))}`)
     )
   }
 }

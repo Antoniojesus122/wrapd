@@ -80,7 +80,13 @@ export async function fetchSpotifyProfile(accessToken: string): Promise<SpotifyU
   })
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(`[spotify] /me failed: ${res.status} ${text}`)
+    console.error('[spotify] /me failed', {
+      status: res.status,
+      statusText: res.statusText,
+      body: text,
+      headers: Object.fromEntries(res.headers.entries()),
+    })
+    throw new Error(`[spotify] /me failed: ${res.status} ${text.slice(0, 400)}`)
   }
   return (await res.json()) as SpotifyUser
 }
