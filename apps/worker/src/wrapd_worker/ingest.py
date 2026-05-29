@@ -5,10 +5,18 @@ ejecutar el mismo flow N veces nunca duplica.
 
 Flujo:
 1. Para cada user con tokens válidos, obtener `recently-played` (max 50 items).
-2. Upsert de los artistas (con géneros, popularity).
-3. Upsert de los tracks (con album info).
-4. Insert de los plays (ON CONFLICT DO NOTHING).
-5. Escribir un row en raw.ingest_log con métricas.
+2. Upsert STUBS de artistas con el mínimo info que viene en cada play (id, name).
+   Esto garantiza que la FK de tracks.artist_id se satisface aunque /artists
+   falle (403, rate limit, etc.).
+3. Intentar enriquecer artistas con /artists (genres, popularity, image).
+   Si falla, no rompe el ingest: solo se queda sin esos campos esta vez.
+4. Upsert de los tracks (con album info).
+5. Insert de los plays (ON CONFLICT DO NOTHING).
+6. Escribir un row en raw.ingest_log con métricas.
+
+La gestión de errores usa conexiones independientes: el log de error nunca
+comparte transacción con la ingesta, así que si ésta se cae, podemos
+registrarlo limpiamente.
 """
 
 from datetime import datetime
@@ -26,21 +34,46 @@ def _parse_played_at(iso: str) -> datetime:
     return datetime.fromisoformat(iso.replace("Z", "+00:00"))
 
 
-def _upsert_artists(conn, artists: list[dict[str, Any]]) -> None:
-    if not artists:
-        return
+# ---------------------------------------------------------------------------
+# UPSERT helpers
+# ---------------------------------------------------------------------------
+def _upsert_artist_stubs(conn, items: list[dict[str, Any]]) -> None:
+    """Crear artistas con solo id+name a partir de la info embebida en cada play.
+    No sobrescribe géneros/popularity si el artista ya existía.
+    """
+    seen: set[str] = set()
+    for it in items:
+        for a in it["track"]["artists"] or []:
+            if not a.get("id") or a["id"] in seen:
+                continue
+            seen.add(a["id"])
+            conn.execute(
+                text(
+                    """INSERT INTO raw.artists (id, name, refreshed_at)
+                       VALUES (:id, :name, NOW())
+                       ON CONFLICT (id) DO UPDATE SET
+                         name         = EXCLUDED.name,
+                         refreshed_at = NOW()"""
+                ),
+                {"id": a["id"], "name": a["name"]},
+            )
+
+
+def _enrich_artists(conn, artists: list[dict[str, Any]]) -> None:
+    """Actualizar artistas existentes con datos completos de /artists API."""
     for a in artists:
+        if not a.get("id"):
+            continue
         conn.execute(
             text(
-                """INSERT INTO raw.artists (id, name, genres, image_url, popularity, followers, refreshed_at)
-                   VALUES (:id, :name, :genres, :img, :pop, :followers, NOW())
-                   ON CONFLICT (id) DO UPDATE SET
-                     name         = EXCLUDED.name,
-                     genres       = EXCLUDED.genres,
-                     image_url    = EXCLUDED.image_url,
-                     popularity   = EXCLUDED.popularity,
-                     followers    = EXCLUDED.followers,
-                     refreshed_at = NOW()"""
+                """UPDATE raw.artists
+                      SET name         = :name,
+                          genres       = :genres,
+                          image_url    = :img,
+                          popularity   = :pop,
+                          followers    = :followers,
+                          refreshed_at = NOW()
+                    WHERE id = :id"""
             ),
             {
                 "id": a["id"],
@@ -66,7 +99,8 @@ def _upsert_tracks(conn, items: list[dict[str, Any]]) -> None:
         conn.execute(
             text(
                 """INSERT INTO raw.tracks
-                     (id, name, artist_id, album_name, album_image_url, duration_ms, explicit, popularity, refreshed_at)
+                     (id, name, artist_id, album_name, album_image_url,
+                      duration_ms, explicit, popularity, refreshed_at)
                    VALUES (:id, :name, :artist_id, :album_name, :album_image_url,
                            :duration_ms, :explicit, :popularity, NOW())
                    ON CONFLICT (id) DO UPDATE SET
@@ -115,6 +149,54 @@ def _insert_plays(conn, user_id: str, items: list[dict[str, Any]]) -> int:
     return inserted
 
 
+# ---------------------------------------------------------------------------
+# Ingest log
+# ---------------------------------------------------------------------------
+def _start_log(user_id: str, plays_fetched: int) -> int:
+    """Crear un row en raw.ingest_log en una transacción separada y devolver su id."""
+    with engine().begin() as conn:
+        result = conn.execute(
+            text(
+                """INSERT INTO raw.ingest_log (user_id, status, plays_fetched)
+                   VALUES (:uid, 'started', :fetched)
+                   RETURNING id"""
+            ),
+            {"uid": user_id, "fetched": plays_fetched},
+        )
+        log_id = result.scalar()
+        assert log_id is not None
+        return int(log_id)
+
+
+def _finish_log(log_id: int, *, status: str, inserted: int, error: str | None) -> None:
+    """Actualizar el log de la ingesta. Conexión independiente para que no nos
+    afecte una transacción rota anterior.
+    """
+    try:
+        with engine().begin() as conn:
+            conn.execute(
+                text(
+                    """UPDATE raw.ingest_log
+                          SET finished_at    = NOW(),
+                              status         = :status,
+                              plays_inserted = :ins,
+                              error_message  = :err
+                        WHERE id = :log_id"""
+                ),
+                {
+                    "log_id": log_id,
+                    "status": status,
+                    "ins": inserted,
+                    "err": (error or "")[:500] if error else None,
+                },
+            )
+    except Exception as e:
+        logger.error(f"[ingest_log] no se pudo escribir el log #{log_id}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 def ingest_user(user_id: str) -> dict[str, Any]:
     """Ingesta los últimos plays de un usuario. Retorna métricas."""
     logger.info(f"[ingest] starting · user={user_id}")
@@ -123,54 +205,42 @@ def ingest_user(user_id: str) -> dict[str, Any]:
     items: list[dict[str, Any]] = response.get("items", [])
     logger.info(f"[ingest] fetched {len(items)} plays from Spotify")
 
+    log_id = _start_log(user_id, plays_fetched=len(items))
+
     if not items:
+        _finish_log(log_id, status="ok", inserted=0, error=None)
         return {"fetched": 0, "inserted": 0}
 
-    # Hydrate artists with extra info (genres, popularity)
+    # Intentar enriquecer artistas con /artists. Si falla, lo registramos
+    # pero seguimos: el upsert de stubs garantiza que la FK funciona.
     unique_artist_ids = list({
         a["id"] for it in items for a in (it["track"]["artists"] or []) if a.get("id")
     })
-    artists = client.get_artists(unique_artist_ids)
+    enriched_artists: list[dict[str, Any]] = []
+    enrichment_error: str | None = None
+    try:
+        enriched_artists = client.get_artists(unique_artist_ids)
+        logger.info(f"[ingest] enriched {len(enriched_artists)} artists with full info")
+    except Exception as e:
+        enrichment_error = str(e)
+        logger.warning(f"[ingest] /artists enrichment failed (no rompe el ingest): {e}")
 
-    with engine().begin() as conn:
-        log_id = conn.execute(
-            text(
-                """INSERT INTO raw.ingest_log (user_id, status, plays_fetched)
-                   VALUES (:uid, 'started', :fetched)
-                   RETURNING id"""
-            ),
-            {"uid": user_id, "fetched": len(items)},
-        ).scalar()
-
-        try:
-            _upsert_artists(conn, artists)
+    try:
+        with engine().begin() as conn:
+            _upsert_artist_stubs(conn, items)
+            if enriched_artists:
+                _enrich_artists(conn, enriched_artists)
             _upsert_tracks(conn, items)
             inserted = _insert_plays(conn, user_id, items)
-            conn.execute(
-                text(
-                    """UPDATE raw.ingest_log
-                          SET finished_at = NOW(),
-                              plays_inserted = :ins,
-                              status = 'ok'
-                        WHERE id = :log_id"""
-                ),
-                {"ins": inserted, "log_id": log_id},
-            )
-        except Exception as e:
-            conn.execute(
-                text(
-                    """UPDATE raw.ingest_log
-                          SET finished_at = NOW(),
-                              status = 'error',
-                              error_message = :msg
-                        WHERE id = :log_id"""
-                ),
-                {"msg": str(e)[:500], "log_id": log_id},
-            )
-            raise
 
-    logger.info(f"[ingest] done · fetched={len(items)} inserted={inserted}")
-    return {"fetched": len(items), "inserted": inserted}
+        suffix = " (sin enrichment)" if enrichment_error else ""
+        _finish_log(log_id, status="ok", inserted=inserted, error=enrichment_error)
+        logger.info(f"[ingest] done · fetched={len(items)} inserted={inserted}{suffix}")
+        return {"fetched": len(items), "inserted": inserted}
+    except Exception as e:
+        logger.error(f"[ingest] db transaction failed: {e}")
+        _finish_log(log_id, status="error", inserted=0, error=str(e))
+        raise
 
 
 def ingest_all_users() -> dict[str, Any]:
@@ -187,7 +257,7 @@ def ingest_all_users() -> dict[str, Any]:
             total_inserted += r["inserted"]
         except Exception as e:
             logger.error(f"[ingest_all] user={u['user_id']} failed: {e}")
-            errors.append({"user_id": u["user_id"], "error": str(e)})
+            errors.append({"user_id": u["user_id"], "error": str(e)[:300]})
     return {
         "users": len(users),
         "total_fetched": total_fetched,
