@@ -3,10 +3,14 @@ import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/session'
 import { query } from '@/lib/db'
 import { BottomNav } from '@/components/BottomNav'
+import { TopNav } from '@/components/TopNav'
 import { PeriodTabs, parsePeriod, type Period } from '@/components/PeriodTabs'
 import { AlbumArt } from '@/components/AlbumArt'
 
-// -- Types -----------------------------------------------------------------
+interface UserMeta {
+  display_name: string | null
+  avatar_url: string | null
+}
 interface TopArtist {
   artist_id: string
   artist_name: string
@@ -15,7 +19,6 @@ interface TopArtist {
   play_count: number
   rank: number
 }
-
 interface TopTrack {
   track_id: string
   track_name: string
@@ -26,7 +29,6 @@ interface TopTrack {
   play_count: number
   rank: number
 }
-
 interface SpotifyTopArtist {
   rank: number
   artist_id: string
@@ -35,7 +37,6 @@ interface SpotifyTopArtist {
   genres: string[] | null
   popularity: number | null
 }
-
 interface SpotifyTopTrack {
   rank: number
   track_id: string
@@ -53,44 +54,27 @@ type View = 'artists' | 'tracks'
 type Source = 'plays' | 'spotify'
 type SpotifyRange = 'short_term' | 'medium_term' | 'long_term'
 
-function parseView(value?: string | null): View {
-  return value === 'tracks' ? 'tracks' : 'artists'
-}
-function parseSource(value?: string | null): Source {
-  return value === 'spotify' ? 'spotify' : 'plays'
-}
-function parseSpotifyRange(value?: string | null): SpotifyRange {
-  return value === 'medium_term' || value === 'long_term' ? value : 'short_term'
+function parseView(v?: string | null): View { return v === 'tracks' ? 'tracks' : 'artists' }
+function parseSource(v?: string | null): Source { return v === 'spotify' ? 'spotify' : 'plays' }
+function parseSpotifyRange(v?: string | null): SpotifyRange {
+  return v === 'medium_term' || v === 'long_term' ? v : 'short_term'
 }
 
 const PERIOD_LABEL: Record<Period, string> = {
-  '1d': 'últimas 24h',
-  '7d': 'última semana',
-  '30d': 'último mes',
-  '1y': 'último año',
+  '1d': 'últimas 24h', '7d': 'última semana', '30d': 'último mes', '1y': 'último año',
 }
 const RANGE_LABEL: Record<SpotifyRange, string> = {
-  short_term: '4 semanas',
-  medium_term: '6 meses',
-  long_term: 'all time',
+  short_term: '4 semanas', medium_term: '6 meses', long_term: 'all time',
 }
 const RANGE_TABS: SpotifyRange[] = ['short_term', 'medium_term', 'long_term']
 const RANGE_SHORT: Record<SpotifyRange, string> = {
-  short_term: '4w',
-  medium_term: '6m',
-  long_term: 'all',
+  short_term: '4w', medium_term: '6m', long_term: 'all',
 }
 
-// --------------------------------------------------------------------------
 export default async function TopPage({
   searchParams,
 }: {
-  searchParams: Promise<{
-    period?: string
-    view?: string
-    source?: string
-    range?: string
-  }>
+  searchParams: Promise<{ period?: string; view?: string; source?: string; range?: string }>
 }) {
   const session = await getSession()
   if (!session) redirect('/')
@@ -101,13 +85,20 @@ export default async function TopPage({
   const period = parsePeriod(sp.period)
   const range = parseSpotifyRange(sp.range)
 
-  const limit = 50
+  let user: UserMeta = { display_name: null, avatar_url: null }
   let artists: TopArtist[] = []
   let tracks: TopTrack[] = []
   let spArtists: SpotifyTopArtist[] = []
   let spTracks: SpotifyTopTrack[] = []
 
   try {
+    const userRows = await query<UserMeta>(
+      `SELECT display_name, avatar_url FROM raw.users WHERE id = $1`,
+      [session.userId]
+    )
+    user = userRows[0] ?? user
+
+    const limit = 50
     if (source === 'plays') {
       if (view === 'artists') {
         artists = await query<TopArtist>(
@@ -143,260 +134,260 @@ export default async function TopPage({
 
   const isEmpty =
     source === 'plays'
-      ? view === 'artists'
-        ? artists.length === 0
-        : tracks.length === 0
-      : view === 'artists'
-        ? spArtists.length === 0
-        : spTracks.length === 0
-
-  const baseHref =
-    `/top?source=${source}` +
-    (view === 'tracks' ? '&view=tracks' : '') +
-    (source === 'spotify' ? `&range=${range}` : '')
+      ? (view === 'artists' ? artists.length === 0 : tracks.length === 0)
+      : (view === 'artists' ? spArtists.length === 0 : spTracks.length === 0)
 
   return (
-    <main className="min-h-screen px-6 pt-12 pb-32 max-w-md mx-auto relative">
-      <div className="flex items-center justify-between mb-6">
-        <Link href="/home" className="font-mono text-[11px] text-text-mute hover:text-text-dim">
-          ← back
-        </Link>
-        <span className="font-extrabold text-xl tracking-tighter">
-          <span
-            style={{
+    <>
+      <TopNav displayName={user.display_name} avatarUrl={user.avatar_url} />
+
+      <main className="min-h-screen px-6 md:px-8 lg:px-12 pt-8 md:pt-12 pb-32 md:pb-16 max-w-md md:max-w-6xl mx-auto">
+        {/* Mobile header */}
+        <div className="flex md:hidden items-center justify-between mb-6">
+          <Link href="/home" className="font-mono text-[11px] text-text-mute">← back</Link>
+          <span className="font-extrabold text-xl tracking-tighter">
+            <span style={{
               background: 'linear-gradient(135deg, var(--color-magenta), var(--color-cyan))',
-              WebkitBackgroundClip: 'text',
-              backgroundClip: 'text',
-              color: 'transparent',
-            }}
-          >
-            wrapd
+              WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
+            }}>wrapd</span><span className="text-magenta">.</span>
           </span>
-          <span className="text-magenta">.</span>
-        </span>
-        <div className="w-12" />
-      </div>
+          <div className="w-12" />
+        </div>
 
-      <div className="font-mono text-[11px] text-text-mute uppercase tracking-widest mb-1">
-        tus tops · {source === 'plays' ? PERIOD_LABEL[period] : `top spotify · ${RANGE_LABEL[range]}`}
-      </div>
-      <h1 className="text-3xl font-bold tracking-tight mb-5">
-        Top <span className="text-magenta">{view === 'artists' ? 'artistas' : 'tracks'}</span>
-      </h1>
+        <div className="font-mono text-[11px] text-text-mute uppercase tracking-widest mb-1">
+          tus tops · {source === 'plays' ? PERIOD_LABEL[period] : `top spotify · ${RANGE_LABEL[range]}`}
+        </div>
+        <h1 className="text-3xl md:text-5xl font-bold tracking-tight mb-6 md:mb-8">
+          Top <span className="text-magenta">{view === 'artists' ? 'artistas' : 'tracks'}</span>
+        </h1>
 
-      {/* SOURCE toggle */}
-      <div className="grid grid-cols-2 gap-2 mb-4">
-        <Link
-          href={`/top?source=plays${view === 'tracks' ? '&view=tracks' : ''}`}
-          className={`text-center py-2.5 rounded-xl border text-sm font-medium transition-colors ${
-            source === 'plays'
-              ? 'bg-surface border-magenta text-text'
-              : 'bg-transparent border-border text-text-dim hover:text-text'
-          }`}
-        >
-          Mis plays
-        </Link>
-        <Link
-          href={`/top?source=spotify${view === 'tracks' ? '&view=tracks' : ''}`}
-          className={`text-center py-2.5 rounded-xl border text-sm font-medium transition-colors ${
-            source === 'spotify'
-              ? 'bg-surface border-cyan text-text'
-              : 'bg-transparent border-border text-text-dim hover:text-text'
-          }`}
-        >
-          Spotify Top
-        </Link>
-      </div>
-
-      {/* VIEW toggle */}
-      <div className="grid grid-cols-2 gap-2 mb-4">
-        <Link
-          href={`/top?source=${source}${source === 'spotify' ? `&range=${range}` : ''}${sp.period ? `&period=${period}` : ''}`}
-          className={`text-center py-2 rounded-lg border text-[13px] font-medium transition-colors ${
-            view === 'artists' ? 'border-border-strong text-text' : 'border-border text-text-mute hover:text-text-dim'
-          }`}
-        >
-          Artistas
-        </Link>
-        <Link
-          href={`/top?source=${source}&view=tracks${source === 'spotify' ? `&range=${range}` : ''}${sp.period ? `&period=${period}` : ''}`}
-          className={`text-center py-2 rounded-lg border text-[13px] font-medium transition-colors ${
-            view === 'tracks' ? 'border-border-strong text-text' : 'border-border text-text-mute hover:text-text-dim'
-          }`}
-        >
-          Tracks
-        </Link>
-      </div>
-
-      {/* PERIOD or RANGE tabs */}
-      {source === 'plays' ? (
-        <PeriodTabs active={period} baseHref={baseHref} />
-      ) : (
-        <div className="flex gap-1 bg-surface rounded-full p-1 mb-6">
-          {RANGE_TABS.map((r) => {
-            const isActive = r === range
-            const href = `/top?source=spotify&range=${r}${view === 'tracks' ? '&view=tracks' : ''}`
-            return (
+        {/* CONTROLS — responsive */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 mb-6 md:mb-8">
+          <div className="lg:col-span-3 flex flex-col gap-3">
+            {/* Source toggle */}
+            <div className="grid grid-cols-2 gap-2">
               <Link
-                key={r}
-                href={href}
-                scroll={false}
-                className={`flex-1 text-center py-2 font-mono text-[11px] font-medium rounded-full transition-colors ${
-                  isActive ? 'bg-cyan text-bg' : 'text-text-mute hover:text-text-dim'
+                href={`/top?source=plays${view === 'tracks' ? '&view=tracks' : ''}`}
+                className={`text-center py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+                  source === 'plays' ? 'bg-surface border-magenta text-text' : 'border-border text-text-dim hover:text-text'
                 }`}
-              >
-                {RANGE_SHORT[r]}
-              </Link>
-            )
-          })}
-        </div>
-      )}
+              >Mis plays</Link>
+              <Link
+                href={`/top?source=spotify${view === 'tracks' ? '&view=tracks' : ''}`}
+                className={`text-center py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+                  source === 'spotify' ? 'bg-surface border-cyan text-text' : 'border-border text-text-dim hover:text-text'
+                }`}
+              >Spotify Top</Link>
+            </div>
 
-      {/* EMPTY */}
-      {isEmpty && (
-        <div className="bg-surface border border-dashed border-border-strong rounded-2xl p-6 text-center">
-          <div className="font-mono text-[10px] text-magenta uppercase tracking-widest mb-2">
-            sin datos · todavía
+            {/* View toggle */}
+            <div className="grid grid-cols-2 gap-2">
+              <Link
+                href={`/top?source=${source}${source === 'spotify' ? `&range=${range}` : ''}`}
+                className={`text-center py-2 rounded-lg border text-[13px] font-medium transition-colors ${
+                  view === 'artists' ? 'border-border-strong text-text' : 'border-border text-text-mute hover:text-text-dim'
+                }`}
+              >Artistas</Link>
+              <Link
+                href={`/top?source=${source}&view=tracks${source === 'spotify' ? `&range=${range}` : ''}`}
+                className={`text-center py-2 rounded-lg border text-[13px] font-medium transition-colors ${
+                  view === 'tracks' ? 'border-border-strong text-text' : 'border-border text-text-mute hover:text-text-dim'
+                }`}
+              >Tracks</Link>
+            </div>
           </div>
-          <p className="text-text-dim leading-relaxed text-sm">
-            {source === 'spotify'
-              ? 'Lanza el worker con --tops para traer tu top de Spotify (4 semanas / 6 meses / all time).'
-              : 'Lanza el worker para ingestar plays.'}
-          </p>
-          <code className="block mt-3 font-mono text-[11px] text-cyan">
-            {source === 'spotify'
-              ? 'python -m wrapd_worker.flows --tops'
-              : 'python -m wrapd_worker.flows'}
-          </code>
-        </div>
-      )}
 
-      {/* LIST · plays · artists */}
-      {!isEmpty && source === 'plays' && view === 'artists' && (
-        <ul className="space-y-3.5">
-          {artists.map((a, i) => {
-            const max = artists[0].play_count
-            const pct = Math.round((a.play_count / max) * 100)
-            return (
-              <li key={a.artist_id} className="flex items-center gap-3.5">
-                <RankBadge i={i} />
-                <AlbumArt url={a.artist_image_url} seed={a.artist_id} size={52} rounded="md" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-text font-semibold truncate">{a.artist_name}</div>
-                  <div className="text-text-dim text-[12px] truncate">
-                    {a.play_count} plays
+          <div className="lg:col-span-9">
+            {/* Period / range tabs */}
+            {source === 'plays' ? (
+              <PeriodTabs
+                active={period}
+                baseHref={`/top?source=plays${view === 'tracks' ? '&view=tracks' : ''}`}
+              />
+            ) : (
+              <div className="flex gap-1 bg-surface rounded-full p-1">
+                {RANGE_TABS.map((r) => {
+                  const isActive = r === range
+                  const href = `/top?source=spotify&range=${r}${view === 'tracks' ? '&view=tracks' : ''}`
+                  return (
+                    <Link
+                      key={r}
+                      href={href}
+                      scroll={false}
+                      className={`flex-1 text-center py-2 font-mono text-[11px] font-medium rounded-full transition-colors ${
+                        isActive ? 'bg-cyan text-bg' : 'text-text-mute hover:text-text-dim'
+                      }`}
+                    >
+                      {RANGE_SHORT[r]} · {RANGE_LABEL[r]}
+                    </Link>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* EMPTY */}
+        {isEmpty && (
+          <div className="bg-surface border border-dashed border-border-strong rounded-2xl p-6 text-center max-w-2xl mx-auto">
+            <div className="font-mono text-[10px] text-magenta uppercase tracking-widest mb-2">
+              sin datos · todavía
+            </div>
+            <p className="text-text-dim leading-relaxed text-sm">
+              {source === 'spotify'
+                ? 'Lanza el worker con --tops para traer tu top de Spotify.'
+                : 'Lanza el worker para ingestar plays.'}
+            </p>
+            <code className="block mt-3 font-mono text-[11px] text-cyan">
+              {source === 'spotify' ? 'python -m wrapd_worker.flows --tops' : 'python -m wrapd_worker.flows'}
+            </code>
+          </div>
+        )}
+
+        {/* LISTS · grid responsive */}
+        {!isEmpty && source === 'plays' && view === 'artists' && (
+          <ResponsiveList>
+            {artists.map((a, i) => {
+              const max = artists[0].play_count
+              const pct = Math.round((a.play_count / max) * 100)
+              return (
+                <ItemRow
+                  key={a.artist_id}
+                  rank={i}
+                  art={<AlbumArt url={a.artist_image_url} seed={a.artist_id} size={52} rounded="md" />}
+                  title={a.artist_name}
+                  subtitle={
+                    <>
+                      {a.play_count} plays
+                      {a.genres && a.genres.length > 0 && (
+                        <> · <span className="text-text-mute">{a.genres.slice(0, 2).join(' / ')}</span></>
+                      )}
+                    </>
+                  }
+                  bar={pct}
+                />
+              )
+            })}
+          </ResponsiveList>
+        )}
+
+        {!isEmpty && source === 'plays' && view === 'tracks' && (
+          <ResponsiveList>
+            {tracks.map((t, i) => {
+              const max = Number(tracks[0].play_count)
+              const pct = Math.round((t.play_count / max) * 100)
+              return (
+                <ItemRow
+                  key={t.track_id}
+                  rank={i}
+                  art={<AlbumArt url={t.album_image_url} seed={t.track_id} size={52} rounded="md" />}
+                  title={t.track_name}
+                  subtitle={<>{t.artist_name} · {t.play_count} plays</>}
+                  bar={pct}
+                />
+              )
+            })}
+          </ResponsiveList>
+        )}
+
+        {!isEmpty && source === 'spotify' && view === 'artists' && (
+          <ResponsiveList>
+            {spArtists.map((a, i) => (
+              <ItemRow
+                key={a.artist_id}
+                rank={i}
+                variant="cyan"
+                art={<AlbumArt url={a.artist_image_url} seed={a.artist_id} size={52} rounded="md" />}
+                title={a.artist_name ?? '—'}
+                subtitle={
+                  <>
+                    {a.popularity !== null && <>pop {a.popularity}</>}
                     {a.genres && a.genres.length > 0 && (
                       <> · <span className="text-text-mute">{a.genres.slice(0, 2).join(' / ')}</span></>
                     )}
-                  </div>
-                  <Bar pct={pct} />
-                </div>
-              </li>
-            )
-          })}
-        </ul>
-      )}
+                  </>
+                }
+              />
+            ))}
+          </ResponsiveList>
+        )}
 
-      {/* LIST · plays · tracks */}
-      {!isEmpty && source === 'plays' && view === 'tracks' && (
-        <ul className="space-y-3.5">
-          {tracks.map((t, i) => {
-            const max = Number(tracks[0].play_count)
-            const pct = Math.round((t.play_count / max) * 100)
-            return (
-              <li key={t.track_id} className="flex items-center gap-3.5">
-                <RankBadge i={i} />
-                <AlbumArt url={t.album_image_url} seed={t.track_id} size={52} rounded="md" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-text font-semibold truncate">{t.track_name}</div>
-                  <div className="text-text-dim text-[12px] truncate">
-                    {t.artist_name} · {t.play_count} plays
-                  </div>
-                  <Bar pct={pct} />
-                </div>
-              </li>
-            )
-          })}
-        </ul>
-      )}
+        {!isEmpty && source === 'spotify' && view === 'tracks' && (
+          <ResponsiveList>
+            {spTracks.map((t, i) => (
+              <ItemRow
+                key={t.track_id}
+                rank={i}
+                variant="cyan"
+                art={<AlbumArt url={t.album_image_url} seed={t.track_id} size={52} rounded="md" />}
+                title={t.track_name ?? '—'}
+                subtitle={
+                  <>
+                    {t.artist_name ?? '—'}
+                    {(t.energy !== null || t.valence !== null) && (
+                      <div className="flex gap-2 mt-1 font-mono text-[10px] text-text-mute">
+                        {t.energy !== null && <span>energy {Math.round(Number(t.energy) * 100)}</span>}
+                        {t.valence !== null && <span>mood {Math.round(Number(t.valence) * 100)}</span>}
+                        {t.danceability !== null && <span>dance {Math.round(Number(t.danceability) * 100)}</span>}
+                      </div>
+                    )}
+                  </>
+                }
+              />
+            ))}
+          </ResponsiveList>
+        )}
 
-      {/* LIST · spotify · artists */}
-      {!isEmpty && source === 'spotify' && view === 'artists' && (
-        <ul className="space-y-3.5">
-          {spArtists.map((a, i) => (
-            <li key={a.artist_id} className="flex items-center gap-3.5">
-              <RankBadge i={i} variant="cyan" />
-              <AlbumArt url={a.artist_image_url} seed={a.artist_id} size={52} rounded="md" />
-              <div className="flex-1 min-w-0">
-                <div className="text-text font-semibold truncate">
-                  {a.artist_name ?? '—'}
-                </div>
-                <div className="text-text-dim text-[12px] truncate">
-                  {a.popularity !== null && <>pop {a.popularity}</>}
-                  {a.genres && a.genres.length > 0 && (
-                    <> · <span className="text-text-mute">{a.genres.slice(0, 2).join(' / ')}</span></>
-                  )}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {/* LIST · spotify · tracks */}
-      {!isEmpty && source === 'spotify' && view === 'tracks' && (
-        <ul className="space-y-3.5">
-          {spTracks.map((t, i) => (
-            <li key={t.track_id} className="flex items-center gap-3.5">
-              <RankBadge i={i} variant="cyan" />
-              <AlbumArt url={t.album_image_url} seed={t.track_id} size={52} rounded="md" />
-              <div className="flex-1 min-w-0">
-                <div className="text-text font-semibold truncate">
-                  {t.track_name ?? '—'}
-                </div>
-                <div className="text-text-dim text-[12px] truncate">
-                  {t.artist_name ?? '—'}
-                </div>
-                {(t.energy !== null || t.valence !== null) && (
-                  <div className="flex gap-2 mt-1 font-mono text-[10px] text-text-mute">
-                    {t.energy !== null && <span>energy {Math.round(Number(t.energy) * 100)}</span>}
-                    {t.valence !== null && <span>mood {Math.round(Number(t.valence) * 100)}</span>}
-                    {t.danceability !== null && <span>dance {Math.round(Number(t.danceability) * 100)}</span>}
-                  </div>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <BottomNav />
-    </main>
+        <BottomNav />
+      </main>
+    </>
   )
 }
 
-function RankBadge({ i, variant = 'mag' }: { i: number; variant?: 'mag' | 'cyan' }) {
+function ResponsiveList({ children }: { children: React.ReactNode }) {
+  return (
+    <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-x-5 gap-y-3">
+      {children}
+    </ul>
+  )
+}
+
+function ItemRow({
+  rank, art, title, subtitle, bar, variant = 'mag',
+}: {
+  rank: number
+  art: React.ReactNode
+  title: string
+  subtitle: React.ReactNode
+  bar?: number
+  variant?: 'mag' | 'cyan'
+}) {
   const top1 = variant === 'cyan' ? 'text-cyan' : 'text-magenta'
   const top2 = variant === 'cyan' ? 'text-magenta' : 'text-cyan'
-  const cls =
-    i === 0 ? `${top1} text-[22px]` :
-    i === 1 ? `${top2} text-[18px]` :
-    i === 2 ? 'text-gold text-[18px]' :
+  const rankColor =
+    rank === 0 ? `${top1} text-[22px]` :
+    rank === 1 ? `${top2} text-[18px]` :
+    rank === 2 ? 'text-gold text-[18px]' :
     'text-text-mute text-[18px]'
-  return (
-    <span className={`font-mono w-7 font-semibold ${cls}`}>
-      {String(i + 1).padStart(2, '0')}
-    </span>
-  )
-}
 
-function Bar({ pct }: { pct: number }) {
   return (
-    <div className="mt-1.5 h-1 bg-border rounded-full overflow-hidden w-[70px]">
-      <div
-        className="h-full rounded-full"
-        style={{ width: `${pct}%`, background: 'linear-gradient(90deg, var(--color-magenta), var(--color-cyan))' }}
-      />
-    </div>
+    <li className="bg-surface border border-border rounded-xl p-3 flex items-center gap-3.5 hover:border-border-strong transition-colors">
+      <span className={`font-mono w-7 shrink-0 text-center font-semibold ${rankColor}`}>
+        {String(rank + 1).padStart(2, '0')}
+      </span>
+      {art}
+      <div className="flex-1 min-w-0">
+        <div className="text-text font-semibold truncate">{title}</div>
+        <div className="text-text-dim text-[12px] truncate">{subtitle}</div>
+        {bar !== undefined && (
+          <div className="mt-1.5 h-1 bg-border rounded-full overflow-hidden w-[70px]">
+            <div
+              className="h-full rounded-full"
+              style={{ width: `${bar}%`, background: 'linear-gradient(90deg, var(--color-magenta), var(--color-cyan))' }}
+            />
+          </div>
+        )}
+      </div>
+    </li>
   )
 }
