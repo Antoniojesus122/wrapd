@@ -46,15 +46,18 @@ export default function LandingPage() {
       </div>
 
       {/* Footer */}
-      <div className="absolute bottom-6 inset-x-0 text-center font-mono text-[10px] text-text-mute tracking-widest">
-        wrapd · v0.1 · built by{' '}
+      <div className="absolute bottom-6 inset-x-0 text-center font-mono text-[10px] text-text-mute tracking-widest flex justify-center gap-5">
+        <a href="/privacy" className="hover:text-text-dim">privacy</a>
+        <span>·</span>
+        <a href="/terms" className="hover:text-text-dim">terms</a>
+        <span>·</span>
         <a
-          href="https://github.com/Antoniojesus122"
+          href="https://github.com/Antoniojesus122/wrapd"
           className="hover:text-text-dim"
           target="_blank"
           rel="noopener noreferrer"
         >
-          @antoniojesus122
+          source
         </a>
       </div>
     </main>
