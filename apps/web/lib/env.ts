@@ -29,6 +29,7 @@ export const env = {
     scopes: [
       'user-read-recently-played',
       'user-read-currently-playing',
+      'user-top-read', // /me/top/{tracks,artists}
       'user-read-email',
       'user-read-private',
     ].join(' '),

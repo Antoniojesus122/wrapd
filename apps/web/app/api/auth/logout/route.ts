@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { clearSessionCookie } from '@/lib/session'
+import { absoluteUrl } from '@/lib/url'
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   await clearSessionCookie()
-  return NextResponse.redirect(new URL('/', req.url))
+  return NextResponse.redirect(absoluteUrl(req, '/'))
 }

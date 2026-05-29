@@ -1,8 +1,13 @@
 /**
  * GET /api/auth/login
+ *
  * Genera un state aleatorio (CSRF), lo guarda en cookie temporal y redirige a Spotify.
+ *
+ * Query opcional:
+ *   ?force=1  → fuerza la pantalla de consentimiento de Spotify
+ *               (úsalo cuando añades scopes nuevos para que el usuario los acepte)
  */
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { cookies } from 'next/headers'
 import { buildAuthorizeUrl } from '@/lib/spotify'
 
@@ -15,8 +20,10 @@ function randomState(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const state = randomState()
+  const forceConsent = req.nextUrl.searchParams.get('force') === '1'
+
   const c = await cookies()
   c.set(STATE_COOKIE, state, {
     httpOnly: true,
@@ -25,5 +32,5 @@ export async function GET() {
     path: '/',
     maxAge: STATE_MAX_AGE,
   })
-  return NextResponse.redirect(buildAuthorizeUrl(state))
+  return NextResponse.redirect(buildAuthorizeUrl(state, forceConsent))
 }

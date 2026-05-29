@@ -315,45 +315,35 @@ def ingest_tops(user_id: str) -> dict[str, Any]:
                 logger.warning(f"[ingest_tops] artists · {tr} failed: {e}")
                 metrics["artists"][tr] = 0
 
-        # Upsert artistas con full info (genres, popularity, image) si tenemos
+        # Upsert artistas: siempre con la info que tengamos (genres puede ser []
+        # si Spotify no la devolvió). El UPDATE sobrescribe solo si los campos
+        # llegan no-null; los que ya estuvieran enriquecidos no se pierden.
         for a in all_artists_seen.values():
             has_full = "genres" in a or "popularity" in a
+            conn.execute(
+                text(
+                    """INSERT INTO raw.artists
+                         (id, name, genres, image_url, popularity, followers, refreshed_at)
+                       VALUES (:id, :name, :genres, :img, :pop, :followers, NOW())
+                       ON CONFLICT (id) DO UPDATE SET
+                         name         = EXCLUDED.name,
+                         genres       = COALESCE(NULLIF(EXCLUDED.genres, '{}'::text[]), raw.artists.genres),
+                         image_url    = COALESCE(EXCLUDED.image_url, raw.artists.image_url),
+                         popularity   = COALESCE(EXCLUDED.popularity, raw.artists.popularity),
+                         followers    = COALESCE(EXCLUDED.followers, raw.artists.followers),
+                         refreshed_at = NOW()"""
+                ),
+                {
+                    "id": a["id"],
+                    "name": a["name"],
+                    "genres": a.get("genres", []),
+                    "img": (a.get("images") or [{}])[0].get("url"),
+                    "pop": a.get("popularity"),
+                    "followers": (a.get("followers") or {}).get("total"),
+                },
+            )
             if has_full:
-                conn.execute(
-                    text(
-                        """INSERT INTO raw.artists
-                             (id, name, genres, image_url, popularity, followers, refreshed_at)
-                           VALUES (:id, :name, :genres, :img, :pop, :followers, NOW())
-                           ON CONFLICT (id) DO UPDATE SET
-                             name         = EXCLUDED.name,
-                             genres       = EXCLUDED.genres,
-                             image_url    = EXCLUDED.image_url,
-                             popularity   = EXCLUDED.popularity,
-                             followers    = EXCLUDED.followers,
-                             refreshed_at = NOW()"""
-                    ),
-                    {
-                        "id": a["id"],
-                        "name": a["name"],
-                        "genres": a.get("genres", []),
-                        "img": (a.get("images") or [{}])[0].get("url"),
-                        "pop": a.get("popularity"),
-                        "followers": (a.get("followers") or {}).get("total"),
-                    },
-                )
                 metrics["enriched_artists"] += 1
-            else:
-                # Solo stub
-                conn.execute(
-                    text(
-                        """INSERT INTO raw.artists (id, name, refreshed_at)
-                           VALUES (:id, :name, NOW())
-                           ON CONFLICT (id) DO UPDATE SET
-                             name         = EXCLUDED.name,
-                             refreshed_at = NOW()"""
-                    ),
-                    {"id": a["id"], "name": a["name"]},
-                )
 
         # Upsert tracks completos
         for t in all_tracks_seen.values():

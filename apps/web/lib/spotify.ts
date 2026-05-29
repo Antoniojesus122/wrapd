@@ -31,14 +31,16 @@ export interface SpotifyUser {
 }
 
 /** Build authorization URL with state for CSRF protection. */
-export function buildAuthorizeUrl(state: string): string {
+export function buildAuthorizeUrl(state: string, forceConsent = false): string {
   const params = new URLSearchParams({
     client_id: env.spotify.clientId,
     response_type: 'code',
     redirect_uri: env.spotify.redirectUri,
     scope: env.spotify.scopes,
     state,
-    show_dialog: 'false',
+    // Cuando añadimos scopes nuevos, Spotify no los re-pide si el usuario
+    // ya autorizó la app. show_dialog=true fuerza la pantalla de consentimiento.
+    show_dialog: forceConsent ? 'true' : 'false',
   })
   return `${SPOTIFY_AUTH_URL}?${params.toString()}`
 }

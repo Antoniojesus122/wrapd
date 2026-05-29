@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Scopes mínimos para wrapd
     spotify_scopes: str = (
         "user-read-recently-played user-read-currently-playing "
+        "user-top-read "
         "user-read-email user-read-private"
     )
 
