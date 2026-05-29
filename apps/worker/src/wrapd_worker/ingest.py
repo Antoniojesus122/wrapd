@@ -243,6 +243,213 @@ def ingest_user(user_id: str) -> dict[str, Any]:
         raise
 
 
+# ---------------------------------------------------------------------------
+# Top tracks/artists snapshots
+# ---------------------------------------------------------------------------
+TIME_RANGES = ("short_term", "medium_term", "long_term")
+
+
+def _upsert_top_items(
+    conn,
+    user_id: str,
+    kind: str,  # 'track' | 'artist'
+    time_range: str,
+    items: list[dict[str, Any]],
+) -> None:
+    """Insert un snapshot inmutable de top items para (user, kind, range)."""
+    for rank, item in enumerate(items, start=1):
+        conn.execute(
+            text(
+                """INSERT INTO raw.spotify_tops
+                     (user_id, kind, time_range, rank, item_id)
+                   VALUES (:user_id, :kind, :time_range, :rank, :item_id)
+                   ON CONFLICT DO NOTHING"""
+            ),
+            {
+                "user_id": user_id,
+                "kind": kind,
+                "time_range": time_range,
+                "rank": rank,
+                "item_id": item["id"],
+            },
+        )
+
+
+def ingest_tops(user_id: str) -> dict[str, Any]:
+    """Fetch top tracks + top artists para los 3 time ranges de Spotify."""
+    logger.info(f"[ingest_tops] starting · user={user_id}")
+    client = SpotifyClient(user_id)
+
+    metrics = {"tracks": {}, "artists": {}, "enriched_artists": 0, "enriched_tracks": 0}
+    all_artists_seen: dict[str, dict[str, Any]] = {}
+    all_tracks_seen: dict[str, dict[str, Any]] = {}
+
+    with engine().begin() as conn:
+        for tr in TIME_RANGES:
+            # tracks
+            try:
+                tracks = client.get_top("tracks", tr, limit=50)
+                _upsert_top_items(conn, user_id, "track", tr, tracks)
+                metrics["tracks"][tr] = len(tracks)
+                # collect tracks for later upsert
+                for t in tracks:
+                    all_tracks_seen[t["id"]] = t
+                    for a in t.get("artists") or []:
+                        if a.get("id"):
+                            all_artists_seen.setdefault(a["id"], a)
+                logger.info(f"[ingest_tops] tracks · {tr} · {len(tracks)} items")
+            except Exception as e:
+                logger.warning(f"[ingest_tops] tracks · {tr} failed: {e}")
+                metrics["tracks"][tr] = 0
+
+            # artists
+            try:
+                artists = client.get_top("artists", tr, limit=50)
+                _upsert_top_items(conn, user_id, "artist", tr, artists)
+                metrics["artists"][tr] = len(artists)
+                # collect artists with their full info (genres, etc.)
+                for a in artists:
+                    all_artists_seen[a["id"]] = a
+                logger.info(f"[ingest_tops] artists · {tr} · {len(artists)} items")
+            except Exception as e:
+                logger.warning(f"[ingest_tops] artists · {tr} failed: {e}")
+                metrics["artists"][tr] = 0
+
+        # Upsert artistas con full info (genres, popularity, image) si tenemos
+        for a in all_artists_seen.values():
+            has_full = "genres" in a or "popularity" in a
+            if has_full:
+                conn.execute(
+                    text(
+                        """INSERT INTO raw.artists
+                             (id, name, genres, image_url, popularity, followers, refreshed_at)
+                           VALUES (:id, :name, :genres, :img, :pop, :followers, NOW())
+                           ON CONFLICT (id) DO UPDATE SET
+                             name         = EXCLUDED.name,
+                             genres       = EXCLUDED.genres,
+                             image_url    = EXCLUDED.image_url,
+                             popularity   = EXCLUDED.popularity,
+                             followers    = EXCLUDED.followers,
+                             refreshed_at = NOW()"""
+                    ),
+                    {
+                        "id": a["id"],
+                        "name": a["name"],
+                        "genres": a.get("genres", []),
+                        "img": (a.get("images") or [{}])[0].get("url"),
+                        "pop": a.get("popularity"),
+                        "followers": (a.get("followers") or {}).get("total"),
+                    },
+                )
+                metrics["enriched_artists"] += 1
+            else:
+                # Solo stub
+                conn.execute(
+                    text(
+                        """INSERT INTO raw.artists (id, name, refreshed_at)
+                           VALUES (:id, :name, NOW())
+                           ON CONFLICT (id) DO UPDATE SET
+                             name         = EXCLUDED.name,
+                             refreshed_at = NOW()"""
+                    ),
+                    {"id": a["id"], "name": a["name"]},
+                )
+
+        # Upsert tracks completos
+        for t in all_tracks_seen.values():
+            artist_id = (t.get("artists") or [{}])[0].get("id")
+            album = t.get("album") or {}
+            album_img = (album.get("images") or [{}])[0].get("url")
+            conn.execute(
+                text(
+                    """INSERT INTO raw.tracks
+                         (id, name, artist_id, album_name, album_image_url,
+                          duration_ms, explicit, popularity, refreshed_at)
+                       VALUES (:id, :name, :artist_id, :album_name, :album_image_url,
+                               :duration_ms, :explicit, :popularity, NOW())
+                       ON CONFLICT (id) DO UPDATE SET
+                         name            = EXCLUDED.name,
+                         artist_id       = EXCLUDED.artist_id,
+                         album_name      = EXCLUDED.album_name,
+                         album_image_url = EXCLUDED.album_image_url,
+                         duration_ms     = EXCLUDED.duration_ms,
+                         explicit        = EXCLUDED.explicit,
+                         popularity      = EXCLUDED.popularity,
+                         refreshed_at    = NOW()"""
+                ),
+                {
+                    "id": t["id"],
+                    "name": t["name"],
+                    "artist_id": artist_id,
+                    "album_name": album.get("name"),
+                    "album_image_url": album_img,
+                    "duration_ms": t.get("duration_ms"),
+                    "explicit": t.get("explicit"),
+                    "popularity": t.get("popularity"),
+                },
+            )
+            metrics["enriched_tracks"] += 1
+
+    # Audio features (fuera de la transacción anterior — otro batch)
+    try:
+        track_ids = list(all_tracks_seen.keys())
+        if track_ids:
+            features = client.get_audio_features(track_ids)
+            if features:
+                with engine().begin() as conn:
+                    for f in features:
+                        conn.execute(
+                            text(
+                                """INSERT INTO raw.audio_features
+                                     (track_id, danceability, energy, key, loudness, mode,
+                                      speechiness, acousticness, instrumentalness, liveness,
+                                      valence, tempo, duration_ms, time_signature, refreshed_at)
+                                   VALUES (:tid, :dance, :energy, :key, :loud, :mode,
+                                           :speech, :acoust, :instrum, :live,
+                                           :val, :tempo, :dur, :ts, NOW())
+                                   ON CONFLICT (track_id) DO UPDATE SET
+                                     danceability     = EXCLUDED.danceability,
+                                     energy           = EXCLUDED.energy,
+                                     key              = EXCLUDED.key,
+                                     loudness         = EXCLUDED.loudness,
+                                     mode             = EXCLUDED.mode,
+                                     speechiness      = EXCLUDED.speechiness,
+                                     acousticness     = EXCLUDED.acousticness,
+                                     instrumentalness = EXCLUDED.instrumentalness,
+                                     liveness         = EXCLUDED.liveness,
+                                     valence          = EXCLUDED.valence,
+                                     tempo            = EXCLUDED.tempo,
+                                     duration_ms      = EXCLUDED.duration_ms,
+                                     time_signature   = EXCLUDED.time_signature,
+                                     refreshed_at     = NOW()"""
+                            ),
+                            {
+                                "tid": f["id"],
+                                "dance": f.get("danceability"),
+                                "energy": f.get("energy"),
+                                "key": f.get("key"),
+                                "loud": f.get("loudness"),
+                                "mode": f.get("mode"),
+                                "speech": f.get("speechiness"),
+                                "acoust": f.get("acousticness"),
+                                "instrum": f.get("instrumentalness"),
+                                "live": f.get("liveness"),
+                                "val": f.get("valence"),
+                                "tempo": f.get("tempo"),
+                                "dur": f.get("duration_ms"),
+                                "ts": f.get("time_signature"),
+                            },
+                        )
+                metrics["audio_features"] = len(features)
+                logger.info(f"[ingest_tops] audio_features · {len(features)} tracks")
+    except Exception as e:
+        logger.warning(f"[ingest_tops] audio features failed: {e}")
+        metrics["audio_features"] = 0
+
+    logger.info(f"[ingest_tops] done · metrics={metrics}")
+    return metrics
+
+
 def ingest_all_users() -> dict[str, Any]:
     """Loop sobre todos los usuarios con tokens. Retorna métricas agregadas."""
     users = fetch_all("SELECT user_id FROM raw.tokens")

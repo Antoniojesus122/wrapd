@@ -4,6 +4,7 @@ import { getSession } from '@/lib/session'
 import { query } from '@/lib/db'
 import { BottomNav } from '@/components/BottomNav'
 import { AlbumArt } from '@/components/AlbumArt'
+import { NowPlaying } from '@/components/NowPlaying'
 
 interface UserRow {
   id: string
@@ -110,6 +111,9 @@ export default async function HomePage() {
       <h1 className="text-3xl font-bold tracking-tight mb-6">
         Hola, <span className="text-magenta">{user.display_name ?? 'Anónimo'}</span>
       </h1>
+
+      {/* Now playing — solo aparece si hay algo sonando */}
+      <NowPlaying />
 
       {/* Avatar card */}
       <div className="bg-surface border border-border rounded-2xl p-4 flex items-center gap-3.5 mb-8">

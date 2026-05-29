@@ -133,3 +133,69 @@ class SpotifyClient:
                 continue
             result.extend(r.json().get("artists", []))
         return result
+
+    def get_top(
+        self, kind: str, time_range: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """GET /me/top/{tracks|artists}?time_range=short_term|medium_term|long_term
+
+        Devuelve los top items calculados por Spotify para el rango pedido.
+        """
+        assert kind in ("tracks", "artists")
+        assert time_range in ("short_term", "medium_term", "long_term")
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get(
+                f"{SPOTIFY_API_BASE}/me/top/{kind}",
+                params={"time_range": time_range, "limit": limit},
+                headers=self._headers(),
+            )
+        if r.status_code != 200:
+            raise RuntimeError(
+                f"/me/top/{kind} ({time_range}) failed: {r.status_code} {r.text[:200]}"
+            )
+        return r.json().get("items", [])
+
+    def get_currently_playing(self) -> dict[str, Any] | None:
+        """GET /me/player/currently-playing
+
+        Returns None if no track is playing (204 No Content).
+        Item shape includes `item` (track), `progress_ms`, `is_playing`.
+        """
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get(
+                f"{SPOTIFY_API_BASE}/me/player/currently-playing",
+                headers=self._headers(),
+            )
+        if r.status_code == 204:
+            return None
+        if r.status_code != 200:
+            raise RuntimeError(
+                f"/me/player/currently-playing failed: {r.status_code} {r.text[:200]}"
+            )
+        return r.json()
+
+    def get_audio_features(self, track_ids: list[str]) -> list[dict[str, Any]]:
+        """GET /audio-features?ids=...  (batches of up to 100)
+
+        Devuelve features por track (energy, valence, danceability, etc.).
+        Si la API responde 403/404 los registra como warning y continúa.
+        """
+        if not track_ids:
+            return []
+        result: list[dict[str, Any]] = []
+        for i in range(0, len(track_ids), 100):
+            batch = track_ids[i : i + 100]
+            with httpx.Client(timeout=15.0) as client:
+                r = client.get(
+                    f"{SPOTIFY_API_BASE}/audio-features",
+                    params={"ids": ",".join(batch)},
+                    headers=self._headers(),
+                )
+            if r.status_code != 200:
+                logger.warning(
+                    f"[spotify] /audio-features batch failed: {r.status_code} {r.text[:200]}"
+                )
+                continue
+            # filter out null entries (Spotify returns null for unavailable tracks)
+            result.extend([f for f in r.json().get("audio_features", []) if f])
+        return result
