@@ -6,6 +6,14 @@ import { BottomNav } from '@/components/BottomNav'
 import { TopNav } from '@/components/TopNav'
 import { PeriodTabs, parsePeriod, type Period } from '@/components/PeriodTabs'
 import { AlbumArt } from '@/components/AlbumArt'
+import { Pagination } from '@/components/Pagination'
+
+const PAGE_SIZE = 12
+
+function parsePage(v?: string | null): number {
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1
+}
 
 interface UserMeta {
   display_name: string | null
@@ -74,7 +82,7 @@ const RANGE_SHORT: Record<SpotifyRange, string> = {
 export default async function TopPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; view?: string; source?: string; range?: string }>
+  searchParams: Promise<{ period?: string; view?: string; source?: string; range?: string; page?: string }>
 }) {
   const session = await getSession()
   if (!session) redirect('/')
@@ -84,12 +92,15 @@ export default async function TopPage({
   const source = parseSource(sp.source)
   const period = parsePeriod(sp.period)
   const range = parseSpotifyRange(sp.range)
+  const page = parsePage(sp.page)
+  const offset = (page - 1) * PAGE_SIZE
 
   let user: UserMeta = { display_name: null, avatar_url: null }
   let artists: TopArtist[] = []
   let tracks: TopTrack[] = []
   let spArtists: SpotifyTopArtist[] = []
   let spTracks: SpotifyTopTrack[] = []
+  let total = 0
 
   try {
     const userRows = await query<UserMeta>(
@@ -98,34 +109,77 @@ export default async function TopPage({
     )
     user = userRows[0] ?? user
 
-    const limit = 50
     if (source === 'plays') {
       if (view === 'artists') {
-        artists = await query<TopArtist>(
-          `SELECT * FROM marts.top_artists_by_period
-            WHERE user_id = $1 AND period = $2 ORDER BY rank LIMIT $3`,
-          [session.userId, period, limit]
-        )
+        const [rows, count] = await Promise.all([
+          query<TopArtist>(
+            `SELECT * FROM marts.top_artists_by_period
+              WHERE user_id = $1 AND period = $2
+              ORDER BY rank
+              LIMIT $3 OFFSET $4`,
+            [session.userId, period, PAGE_SIZE, offset]
+          ),
+          query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c FROM marts.top_artists_by_period
+              WHERE user_id = $1 AND period = $2`,
+            [session.userId, period]
+          ),
+        ])
+        artists = rows
+        total = Number(count[0]?.c ?? 0)
       } else {
-        tracks = await query<TopTrack>(
-          `SELECT * FROM marts.top_tracks_by_period
-            WHERE user_id = $1 AND period = $2 ORDER BY rank LIMIT $3`,
-          [session.userId, period, limit]
-        )
+        const [rows, count] = await Promise.all([
+          query<TopTrack>(
+            `SELECT * FROM marts.top_tracks_by_period
+              WHERE user_id = $1 AND period = $2
+              ORDER BY rank
+              LIMIT $3 OFFSET $4`,
+            [session.userId, period, PAGE_SIZE, offset]
+          ),
+          query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c FROM marts.top_tracks_by_period
+              WHERE user_id = $1 AND period = $2`,
+            [session.userId, period]
+          ),
+        ])
+        tracks = rows
+        total = Number(count[0]?.c ?? 0)
       }
     } else {
       if (view === 'artists') {
-        spArtists = await query<SpotifyTopArtist>(
-          `SELECT * FROM marts.top_artists_spotify
-            WHERE user_id = $1 AND time_range = $2 ORDER BY rank LIMIT $3`,
-          [session.userId, range, limit]
-        )
+        const [rows, count] = await Promise.all([
+          query<SpotifyTopArtist>(
+            `SELECT * FROM marts.top_artists_spotify
+              WHERE user_id = $1 AND time_range = $2
+              ORDER BY rank
+              LIMIT $3 OFFSET $4`,
+            [session.userId, range, PAGE_SIZE, offset]
+          ),
+          query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c FROM marts.top_artists_spotify
+              WHERE user_id = $1 AND time_range = $2`,
+            [session.userId, range]
+          ),
+        ])
+        spArtists = rows
+        total = Number(count[0]?.c ?? 0)
       } else {
-        spTracks = await query<SpotifyTopTrack>(
-          `SELECT * FROM marts.top_tracks_spotify
-            WHERE user_id = $1 AND time_range = $2 ORDER BY rank LIMIT $3`,
-          [session.userId, range, limit]
-        )
+        const [rows, count] = await Promise.all([
+          query<SpotifyTopTrack>(
+            `SELECT * FROM marts.top_tracks_spotify
+              WHERE user_id = $1 AND time_range = $2
+              ORDER BY rank
+              LIMIT $3 OFFSET $4`,
+            [session.userId, range, PAGE_SIZE, offset]
+          ),
+          query<{ c: string }>(
+            `SELECT COUNT(*)::text AS c FROM marts.top_tracks_spotify
+              WHERE user_id = $1 AND time_range = $2`,
+            [session.userId, range]
+          ),
+        ])
+        spTracks = rows
+        total = Number(count[0]?.c ?? 0)
       }
     }
   } catch (e) {
@@ -136,6 +190,20 @@ export default async function TopPage({
     source === 'plays'
       ? (view === 'artists' ? artists.length === 0 : tracks.length === 0)
       : (view === 'artists' ? spArtists.length === 0 : spTracks.length === 0)
+
+  // Build URL preserving all query params, only changing `page`
+  const buildPageHref = (p: number): string => {
+    const params = new URLSearchParams()
+    params.set('source', source)
+    if (view === 'tracks') params.set('view', 'tracks')
+    if (source === 'plays') params.set('period', period)
+    else params.set('range', range)
+    if (p > 1) params.set('page', String(p))
+    return `/top?${params.toString()}`
+  }
+
+  // For rank display we need to offset by the page
+  const rankOffset = offset
 
   return (
     <>
@@ -250,96 +318,108 @@ export default async function TopPage({
 
         {/* LISTS · grid responsive */}
         {!isEmpty && source === 'plays' && view === 'artists' && (
-          <ResponsiveList>
-            {artists.map((a, i) => {
-              const max = artists[0].play_count
-              const pct = Math.round((a.play_count / max) * 100)
-              return (
+          <>
+            <ResponsiveList>
+              {artists.map((a, i) => {
+                const max = artists[0].play_count
+                const pct = Math.round((a.play_count / max) * 100)
+                return (
+                  <ItemRow
+                    key={a.artist_id}
+                    rank={rankOffset + i}
+                    art={<AlbumArt url={a.artist_image_url} seed={a.artist_id} size={52} rounded="md" />}
+                    title={a.artist_name}
+                    subtitle={
+                      <>
+                        {a.play_count} plays
+                        {a.genres && a.genres.length > 0 && (
+                          <> · <span className="text-text-mute">{a.genres.slice(0, 2).join(' / ')}</span></>
+                        )}
+                      </>
+                    }
+                    bar={pct}
+                  />
+                )
+              })}
+            </ResponsiveList>
+            <Pagination page={page} pageSize={PAGE_SIZE} total={total} buildHref={buildPageHref} />
+          </>
+        )}
+
+        {!isEmpty && source === 'plays' && view === 'tracks' && (
+          <>
+            <ResponsiveList>
+              {tracks.map((t, i) => {
+                const max = Number(tracks[0].play_count)
+                const pct = Math.round((t.play_count / max) * 100)
+                return (
+                  <ItemRow
+                    key={t.track_id}
+                    rank={rankOffset + i}
+                    art={<AlbumArt url={t.album_image_url} seed={t.track_id} size={52} rounded="md" />}
+                    title={t.track_name}
+                    subtitle={<>{t.artist_name} · {t.play_count} plays</>}
+                    bar={pct}
+                  />
+                )
+              })}
+            </ResponsiveList>
+            <Pagination page={page} pageSize={PAGE_SIZE} total={total} buildHref={buildPageHref} />
+          </>
+        )}
+
+        {!isEmpty && source === 'spotify' && view === 'artists' && (
+          <>
+            <ResponsiveList>
+              {spArtists.map((a, i) => (
                 <ItemRow
                   key={a.artist_id}
-                  rank={i}
+                  rank={rankOffset + i}
+                  variant="cyan"
                   art={<AlbumArt url={a.artist_image_url} seed={a.artist_id} size={52} rounded="md" />}
-                  title={a.artist_name}
+                  title={a.artist_name ?? '—'}
                   subtitle={
                     <>
-                      {a.play_count} plays
+                      {a.popularity !== null && <>pop {a.popularity}</>}
                       {a.genres && a.genres.length > 0 && (
                         <> · <span className="text-text-mute">{a.genres.slice(0, 2).join(' / ')}</span></>
                       )}
                     </>
                   }
-                  bar={pct}
                 />
-              )
-            })}
-          </ResponsiveList>
-        )}
-
-        {!isEmpty && source === 'plays' && view === 'tracks' && (
-          <ResponsiveList>
-            {tracks.map((t, i) => {
-              const max = Number(tracks[0].play_count)
-              const pct = Math.round((t.play_count / max) * 100)
-              return (
-                <ItemRow
-                  key={t.track_id}
-                  rank={i}
-                  art={<AlbumArt url={t.album_image_url} seed={t.track_id} size={52} rounded="md" />}
-                  title={t.track_name}
-                  subtitle={<>{t.artist_name} · {t.play_count} plays</>}
-                  bar={pct}
-                />
-              )
-            })}
-          </ResponsiveList>
-        )}
-
-        {!isEmpty && source === 'spotify' && view === 'artists' && (
-          <ResponsiveList>
-            {spArtists.map((a, i) => (
-              <ItemRow
-                key={a.artist_id}
-                rank={i}
-                variant="cyan"
-                art={<AlbumArt url={a.artist_image_url} seed={a.artist_id} size={52} rounded="md" />}
-                title={a.artist_name ?? '—'}
-                subtitle={
-                  <>
-                    {a.popularity !== null && <>pop {a.popularity}</>}
-                    {a.genres && a.genres.length > 0 && (
-                      <> · <span className="text-text-mute">{a.genres.slice(0, 2).join(' / ')}</span></>
-                    )}
-                  </>
-                }
-              />
-            ))}
-          </ResponsiveList>
+              ))}
+            </ResponsiveList>
+            <Pagination page={page} pageSize={PAGE_SIZE} total={total} buildHref={buildPageHref} />
+          </>
         )}
 
         {!isEmpty && source === 'spotify' && view === 'tracks' && (
-          <ResponsiveList>
-            {spTracks.map((t, i) => (
-              <ItemRow
-                key={t.track_id}
-                rank={i}
-                variant="cyan"
-                art={<AlbumArt url={t.album_image_url} seed={t.track_id} size={52} rounded="md" />}
-                title={t.track_name ?? '—'}
-                subtitle={
-                  <>
-                    {t.artist_name ?? '—'}
-                    {(t.energy !== null || t.valence !== null) && (
-                      <div className="flex gap-2 mt-1 font-mono text-[10px] text-text-mute">
-                        {t.energy !== null && <span>energy {Math.round(Number(t.energy) * 100)}</span>}
-                        {t.valence !== null && <span>mood {Math.round(Number(t.valence) * 100)}</span>}
-                        {t.danceability !== null && <span>dance {Math.round(Number(t.danceability) * 100)}</span>}
-                      </div>
-                    )}
-                  </>
-                }
-              />
-            ))}
-          </ResponsiveList>
+          <>
+            <ResponsiveList>
+              {spTracks.map((t, i) => (
+                <ItemRow
+                  key={t.track_id}
+                  rank={rankOffset + i}
+                  variant="cyan"
+                  art={<AlbumArt url={t.album_image_url} seed={t.track_id} size={52} rounded="md" />}
+                  title={t.track_name ?? '—'}
+                  subtitle={
+                    <>
+                      {t.artist_name ?? '—'}
+                      {(t.energy !== null || t.valence !== null) && (
+                        <div className="flex gap-2 mt-1 font-mono text-[10px] text-text-mute">
+                          {t.energy !== null && <span>energy {Math.round(Number(t.energy) * 100)}</span>}
+                          {t.valence !== null && <span>mood {Math.round(Number(t.valence) * 100)}</span>}
+                          {t.danceability !== null && <span>dance {Math.round(Number(t.danceability) * 100)}</span>}
+                        </div>
+                      )}
+                    </>
+                  }
+                />
+              ))}
+            </ResponsiveList>
+            <Pagination page={page} pageSize={PAGE_SIZE} total={total} buildHref={buildPageHref} />
+          </>
         )}
 
         <BottomNav />
