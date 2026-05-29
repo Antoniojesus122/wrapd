@@ -1,5 +1,3 @@
-import Link from 'next/link'
-
 export default function LandingPage() {
   return (
     <main className="min-h-screen flex items-center justify-center px-6 relative overflow-hidden">
@@ -32,7 +30,7 @@ export default function LandingPage() {
           Empieza conectando tu cuenta.
         </p>
 
-        <Link
+        <a
           href="/api/auth/login"
           className="inline-flex items-center justify-center gap-3 bg-white text-black rounded-full px-6 py-4 font-semibold text-[15px] w-full transition-transform hover:scale-[1.02] active:scale-95"
         >
@@ -40,7 +38,7 @@ export default function LandingPage() {
             ♫
           </span>
           Continuar con Spotify
-        </Link>
+        </a>
 
         <div className="mt-6 font-mono text-[10px] text-text-mute tracking-widest">
           privacy-first · sin ads · open source

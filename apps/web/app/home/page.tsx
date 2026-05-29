@@ -95,12 +95,12 @@ export default async function HomePage() {
           </span>
           <span className="text-magenta">.</span>
         </span>
-        <Link
+        <a
           href="/api/auth/logout"
           className="font-mono text-[11px] text-text-mute hover:text-text-dim"
         >
           logout →
-        </Link>
+        </a>
       </div>
 
       {/* Greeting */}
