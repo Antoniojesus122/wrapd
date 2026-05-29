@@ -161,70 +161,74 @@ export default async function TopPage({
           Top <span className="text-magenta">{view === 'artists' ? 'artistas' : 'tracks'}</span>
         </h1>
 
-        {/* CONTROLS — responsive */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 mb-6 md:mb-8">
-          <div className="lg:col-span-3 flex flex-col gap-3">
-            {/* Source toggle */}
-            <div className="grid grid-cols-2 gap-2">
+        {/* CONTROLS · una fila horizontal en desktop, stacked en mobile */}
+        <div className="flex flex-col gap-3 mb-6 md:mb-8">
+          {/* Row 1: Source segment + View segment, lado a lado en md+ */}
+          <div className="flex flex-col md:flex-row gap-3">
+            {/* Source segmented control */}
+            <div className="flex gap-1 bg-surface border border-border rounded-full p-1 md:flex-1 md:max-w-sm">
               <Link
                 href={`/top?source=plays${view === 'tracks' ? '&view=tracks' : ''}`}
-                className={`text-center py-2.5 rounded-xl border text-sm font-medium transition-colors ${
-                  source === 'plays' ? 'bg-surface border-magenta text-text' : 'border-border text-text-dim hover:text-text'
+                scroll={false}
+                className={`flex-1 text-center py-2 rounded-full text-[13px] font-medium transition-colors ${
+                  source === 'plays' ? 'bg-magenta text-white' : 'text-text-mute hover:text-text-dim'
                 }`}
               >Mis plays</Link>
               <Link
                 href={`/top?source=spotify${view === 'tracks' ? '&view=tracks' : ''}`}
-                className={`text-center py-2.5 rounded-xl border text-sm font-medium transition-colors ${
-                  source === 'spotify' ? 'bg-surface border-cyan text-text' : 'border-border text-text-dim hover:text-text'
+                scroll={false}
+                className={`flex-1 text-center py-2 rounded-full text-[13px] font-medium transition-colors ${
+                  source === 'spotify' ? 'bg-cyan text-bg' : 'text-text-mute hover:text-text-dim'
                 }`}
               >Spotify Top</Link>
             </div>
 
-            {/* View toggle */}
-            <div className="grid grid-cols-2 gap-2">
+            {/* View segmented control */}
+            <div className="flex gap-1 bg-surface border border-border rounded-full p-1 md:flex-1 md:max-w-sm">
               <Link
                 href={`/top?source=${source}${source === 'spotify' ? `&range=${range}` : ''}`}
-                className={`text-center py-2 rounded-lg border text-[13px] font-medium transition-colors ${
-                  view === 'artists' ? 'border-border-strong text-text' : 'border-border text-text-mute hover:text-text-dim'
+                scroll={false}
+                className={`flex-1 text-center py-2 rounded-full text-[13px] font-medium transition-colors ${
+                  view === 'artists' ? 'bg-bg-soft text-text' : 'text-text-mute hover:text-text-dim'
                 }`}
               >Artistas</Link>
               <Link
                 href={`/top?source=${source}&view=tracks${source === 'spotify' ? `&range=${range}` : ''}`}
-                className={`text-center py-2 rounded-lg border text-[13px] font-medium transition-colors ${
-                  view === 'tracks' ? 'border-border-strong text-text' : 'border-border text-text-mute hover:text-text-dim'
+                scroll={false}
+                className={`flex-1 text-center py-2 rounded-full text-[13px] font-medium transition-colors ${
+                  view === 'tracks' ? 'bg-bg-soft text-text' : 'text-text-mute hover:text-text-dim'
                 }`}
               >Tracks</Link>
             </div>
           </div>
 
-          <div className="lg:col-span-9">
-            {/* Period / range tabs */}
-            {source === 'plays' ? (
-              <PeriodTabs
-                active={period}
-                baseHref={`/top?source=plays${view === 'tracks' ? '&view=tracks' : ''}`}
-              />
-            ) : (
-              <div className="flex gap-1 bg-surface rounded-full p-1">
-                {RANGE_TABS.map((r) => {
-                  const isActive = r === range
-                  const href = `/top?source=spotify&range=${r}${view === 'tracks' ? '&view=tracks' : ''}`
-                  return (
-                    <Link
-                      key={r}
-                      href={href}
-                      scroll={false}
-                      className={`flex-1 text-center py-2 font-mono text-[11px] font-medium rounded-full transition-colors ${
-                        isActive ? 'bg-cyan text-bg' : 'text-text-mute hover:text-text-dim'
-                      }`}
-                    >
-                      {RANGE_SHORT[r]} · {RANGE_LABEL[r]}
-                    </Link>
-                  )
-                })}
-              </div>
-            )}
-          </div>
+          {/* Row 2: Period / Range tabs, mismo estilo en ambos modos */}
+          {source === 'plays' ? (
+            <PeriodTabs
+              active={period}
+              baseHref={`/top?source=plays${view === 'tracks' ? '&view=tracks' : ''}`}
+            />
+          ) : (
+            <div className="flex gap-1 bg-surface rounded-full p-1">
+              {RANGE_TABS.map((r) => {
+                const isActive = r === range
+                const href = `/top?source=spotify&range=${r}${view === 'tracks' ? '&view=tracks' : ''}`
+                return (
+                  <Link
+                    key={r}
+                    href={href}
+                    scroll={false}
+                    className={`flex-1 text-center py-2 font-mono text-[11px] font-medium rounded-full transition-colors ${
+                      isActive ? 'bg-magenta text-white' : 'text-text-mute hover:text-text-dim'
+                    }`}
+                  >
+                    <span className="md:hidden">{RANGE_SHORT[r]}</span>
+                    <span className="hidden md:inline">{RANGE_SHORT[r]} · {RANGE_LABEL[r]}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* EMPTY */}
